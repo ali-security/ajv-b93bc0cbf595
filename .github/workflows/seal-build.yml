@@ -1,0 +1,60 @@
+# Build-and-pack only. The test suite for this project runs on Travis
+# (see .travis.yml) — no tests or lint here, and therefore no test-filter input.
+name: seal-build
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: Build and pack (linux/amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # spec/JSON-Schema-Test-Suite is only needed by the Travis test legs.
+          submodules: false
+
+      # ajv 6.12.5 was published with Node 14.9.0, which bundles npm 6.14.8 —
+      # the exact pair that produced the public tarball, so no npm re-install.
+      - name: Set up Node.js 14.9.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 14.9.0
+
+      - name: Report toolchain versions
+        run: |
+          node --version
+          npm --version
+
+      # Resolve the dependency tree as it existed at the 2020-09-13 release, so
+      # today's too-new transitive deps don't enter the build.
+      - name: Pin npm registry to the release-date time machine
+        run: npm config set registry https://:2020-09-13T16%3A23%3A15.885Z@time-machines-npm.sealsecurity.io/
+
+      # No lockfile (.npmrc sets package-lock=false), so install, not ci.
+      # --ignore-scripts keeps npm 6 from running `prepublish` mid-install;
+      # devDependencies (browserify, uglify-js, del-cli, dot, brfs) are required
+      # by the build/bundle scripts, so this is not a --production install.
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      # package.json `files` ships lib/ and dist/: lib/dotjs/*.js comes from
+      # `build` and dist/ from `bundle`. Both run explicitly, ahead of the pack.
+      - name: Build compiled validators (lib/dotjs)
+        run: npm run build
+
+      - name: Bundle browser distribution (dist)
+        run: npm run bundle
+
+      - name: Pack tarball
+        run: npm pack
+
+      - name: Upload ajv-6.12.5.tgz
+        uses: actions/upload-artifact@v4
+        with:
+          name: ajv-6.12.5-tgz
+          path: ajv-6.12.5.tgz
+          if-no-files-found: error
